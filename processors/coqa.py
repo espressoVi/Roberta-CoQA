@@ -11,7 +11,7 @@ import spacy
 import torch
 from torch.utils.data import TensorDataset
 from tqdm import tqdm
-from data.processors.utils import DataProcessor
+from processors.utils import DataProcessor
 
 
 #   This code has been very heavily adapted/used from the hugging face's Roberta implmentation on squad dataset. 
