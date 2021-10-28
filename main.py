@@ -17,6 +17,7 @@ train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
 output_directory="Roberta_comb"
 pretrained_model="roberta-base"
+
 epochs = 1.0
 evaluation_batch_size = 16
 train_batch_size = 4
