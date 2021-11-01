@@ -213,15 +213,15 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
             unique_id = int(eval_feature.unique_id)
             attentions = outputs[-1]
             attentions = [output[i].detach().cpu().numpy() for output in attentions]
-            output = [convert_to_list(output[i]) for output in outputs[:-1]]
-            start_logits, end_logits, yes_logits, no_logits, unk_logits = output
-            val = Attentions(eval_feature.unique_id,start_logits, end_logits, yes_logits, no_logits, unk_logits, attentions, eval_feature.tokens,
-                    eval_feature.start_position, eval_feature.end_position, eval_feature.cls_idx, eval_feature.rational_mask)
-            attn_results.append(val)
+            #output = [convert_to_list(output[i]) for output in outputs[:-1]]
+            #start_logits, end_logits, yes_logits, no_logits, unk_logits = output
+            #val = Attentions(eval_feature.unique_id,start_logits, end_logits, yes_logits, no_logits, unk_logits, attentions, eval_feature.tokens,
+            #        eval_feature.start_position, eval_feature.end_position, eval_feature.cls_idx, eval_feature.rational_mask)
+            #attn_results.append(val)
 
-    output_attn_file = os.path.join(output_directory, f"attn_{output_directory}_{dataset_type}.pkl")
-    with open(output_attn_file, 'wb') as out:
-        pickle.dump(attn_results , out, pickle.HIGHEST_PROTOCOL)
+    #output_attn_file = os.path.join(output_directory, f"attn_{output_directory}_{dataset_type}.pkl")
+    #with open(output_attn_file, 'wb') as out:
+    #    pickle.dump(attn_results , out, pickle.HIGHEST_PROTOCOL)
 
 
 
@@ -264,6 +264,7 @@ def load_dataset(tokenizer, evaluate=False, dataset_type = None):
 
 def main(isTraining, attn = False):
     assert torch.cuda.is_available()
+    assert not (isTraining and attn)
     device = torch.device('cuda')
     config = RobertaConfig.from_pretrained(pretrained_model)
 
