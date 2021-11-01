@@ -606,3 +606,19 @@ class Result(object):
         self.yes_logits = yes_logits
         self.no_logits = no_logits
         self.unk_logits = unk_logits
+
+class Attentions(object):
+    def __init__(self, unique_id, start_logits, end_logits, yes_logits, no_logits, unk_logits, attentions, tokens, start_position, end_position, rational_mask, cls_idx):
+        self.unique_id = unique_id
+        self.start_logits = start_logits
+        self.end_logits = end_logits
+        self.yes_logits = yes_logits
+        self.no_logits = no_logits
+        self.unk_logits = unk_logits
+        self.attentions = attentions
+        self.tokens = tokens
+        self.start_position = start_position
+        self.end_position = end_position
+        self.rational_mask = rational_mask
+        self.cls_index = cls_idx
+
