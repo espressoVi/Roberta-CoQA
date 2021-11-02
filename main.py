@@ -13,20 +13,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
+import numpy as np
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_comb"
+output_directory="Roberta_orig"
 pretrained_model="roberta-base"
 
 epochs = 1.0
 evaluation_batch_size = 16
 train_batch_size = 4
 MIN_FLOAT = -1e30
+max_seq_length = 512
  
 class RobertaBaseModel(RobertaModel):
-
-    #   Initialize Layers for our model
     def __init__(self,config, load_pre = False):
         super(RobertaBaseModel,self).__init__(config)
         self.roberta = RobertaModel.from_pretrained(pretrained_model, config=config,) if load_pre else RobertaModel(config)
@@ -200,8 +200,8 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
     #   wrtiting predictions once training is complete
     evalutation_sampler = SequentialSampler(dataset)
     evaluation_dataloader = DataLoader(dataset, sampler=evalutation_sampler, batch_size=evaluation_batch_size)
-    attn_results = []
-    for batch in tqdm(evaluation_dataloader, desc="Evaluating"):
+    attn_results = [[],[],[],[],[],[],[],[],[],[],[],[]]
+    for batch in tqdm(evaluation_dataloader, desc="Attn"):
         model.eval()
         batch = tuple(t.to(device) for t in batch)
         with torch.no_grad():
@@ -213,15 +213,40 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
             unique_id = int(eval_feature.unique_id)
             attentions = outputs[-1]
             attentions = [output[i].detach().cpu().numpy() for output in attentions]
-            #output = [convert_to_list(output[i]) for output in outputs[:-1]]
-            #start_logits, end_logits, yes_logits, no_logits, unk_logits = output
-            #val = Attentions(eval_feature.unique_id,start_logits, end_logits, yes_logits, no_logits, unk_logits, attentions, eval_feature.tokens,
-            #        eval_feature.start_position, eval_feature.end_position, eval_feature.cls_idx, eval_feature.rational_mask)
-            #attn_results.append(val)
+            rational_mask = np.array(eval_feature.rational_mask)
+            length =len(np.where(np.array(eval_feature.input_mask) == 1)[0])
+            _ones = np.where(rational_mask == 1)[0]
+            try:
+                r_start,r_end = _ones[0],_ones[-1]+1
+            except:
+                continue
 
-    #output_attn_file = os.path.join(output_directory, f"attn_{output_directory}_{dataset_type}.pkl")
-    #with open(output_attn_file, 'wb') as out:
-    #    pickle.dump(attn_results , out, pickle.HIGHEST_PROTOCOL)
+            #for j in range(12):
+            #    attn_results[j].append(attention_res(attentions, j, 0,r_start,r_end, length))
+            print(np.sum(attentions[12][r_start:r_end]))
+    #attn_results = np.array(attn_results)
+    #print('Mean: \n')
+    #print(np.mean(attn_results,axis = 1))
+    #print('STD: \n')
+    #print(np.std(attn_results, axis = 1))
+
+def attention_res(attentions,block,head,r_start,r_end,length):
+    assert block < len(attentions)
+    assert head < len(attentions[block])
+    attention = attentions[block][head]
+    #np.save( "attention.npy",attention)
+    assert attention.shape == (max_seq_length,max_seq_length)
+    su,su_r,su_nr = [],[],[]
+    for i in range(length):
+        eta = np.sum(attention[i][r_start:r_end])
+        eta = (eta*length) / (r_end - r_start)
+        if r_start <= i <= r_end:
+            su_r.append(eta)
+        else:
+            su_nr.append(eta)
+        su.append(eta)
+    return np.mean(su), np.mean(su_r),np.mean(su_nr)
+    
 
 
 
@@ -292,7 +317,7 @@ def main(isTraining, attn = False):
             model.to(device)
             model.eval()
             tokenizer = RobertaTokenizer.from_pretrained(output_directory, do_lower_case=True)
-            Write_attentions(model, tokenizer, device, dataset_type = 'RG')
+            Write_attentions(model, tokenizer, device, dataset_type = None)
         else:
             model = RobertaBaseModel(config)
             model.load_state_dict(torch.load(os.path.join(output_directory,'tweights.pt')))
