@@ -221,20 +221,18 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
             except:
                 continue
 
-            #for j in range(12):
-            #    attn_results[j].append(attention_res(attentions, j, 0,r_start,r_end, length))
-            print(np.sum(attentions[12][r_start:r_end]))
-    #attn_results = np.array(attn_results)
-    #print('Mean: \n')
-    #print(np.mean(attn_results,axis = 1))
-    #print('STD: \n')
-    #print(np.std(attn_results, axis = 1))
+            for j in range(12):
+                attn_results[j].append(attention_res(attentions[j], 0,r_start,r_end, length))
+            #print(np.sum(attentions[12][r_start:r_end]))
+    attn_results = np.array(attn_results)
+    print('Mean: \n')
+    print(np.mean(attn_results,axis = 1))
+    print('STD: \n')
+    print(np.std(attn_results, axis = 1))
 
-def attention_res(attentions,block,head,r_start,r_end,length):
-    assert block < len(attentions)
-    assert head < len(attentions[block])
-    attention = attentions[block][head]
-    #np.save( "attention.npy",attention)
+def attention_res(attention,head,r_start,r_end,length):
+    assert head < len(attention)
+    attention = attention[head]
     assert attention.shape == (max_seq_length,max_seq_length)
     su,su_r,su_nr = [],[],[]
     for i in range(length):
