@@ -1,1 +1,1 @@
-python evaluate-v1.0.py --data-file data/coqa-dev-v1.0.json --pred-file Roberta_comb/predictions.json
+python evaluate-v1.0.py --data-file data/coqa-dev-v1.0.json --pred-file Roberta_combM/predictions.json

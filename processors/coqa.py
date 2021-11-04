@@ -13,10 +13,6 @@ from torch.utils.data import TensorDataset
 from tqdm import tqdm
 from processors.utils import DataProcessor
 
-
-#   This code has been very heavily adapted/used from the hugging face's Roberta implmentation on squad dataset. 
-#   https://github.com/huggingface/transformers/blob/master/src/transformers/data/processors/squad.py
-
 def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_answer_text):
     """Returns tokenized answer spans that better match the annotated answer."""
     tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
@@ -573,13 +569,15 @@ class Processor(DataProcessor):
                     edge,inc = r_end,True
                 elif dataset_type == "R" or dataset_type == "RG":
                     edge,inc = r_start,False
+                    r_start,r_end = -1,-1
                 for i,j in _datum['annotated_context']['sentences']:
                     if edge >= i and edge <= j:
                         sent = j if inc else i
                 doc_tok = doc_tok[:sent]
-                if dataset_type in ["R","RG"]:
-                    doc_tok.append(_qas['raw_answer'])
-                    r_start,r_end = 0,len(doc_tok)
+
+                if dataset_type == "RG":
+                    if " ".join(doc_tok).find(_qas['raw_answer']) == -1 and _qas['raw_answer'] not in ['unknown','yes','no']:
+                        doc_tok.append(_qas['raw_answer'])
 
             example = CoqaExample(
                 qas_id = _datum['id'] + ' ' + str(_qas['turn_id']),

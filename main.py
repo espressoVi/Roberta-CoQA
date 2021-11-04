@@ -15,7 +15,7 @@ from torch.nn import CrossEntropyLoss
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_comb"
+output_directory="Roberta_combM"
 pretrained_model="roberta-base"
 
 epochs = 1.0
