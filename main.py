@@ -220,19 +220,22 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
                 r_start,r_end = _ones[0],_ones[-1]+1
             except:
                 continue
-
             for j in range(12):
-                attn_results[j].append(attention_res(attentions[j], 0,r_start,r_end, length))
+                attn_results[j].append(attention_res(attentions[j], -1, r_start,r_end, length))
             #print(np.sum(attentions[12][r_start:r_end]))
     attn_results = np.array(attn_results)
-    print('Mean: \n')
-    print(np.mean(attn_results,axis = 1))
-    print('STD: \n')
-    print(np.std(attn_results, axis = 1))
+    
+    Mean = np.mean(attn_results,axis = 1)
+    STD = np.std(attn_results, axis = 1)
+    for i in range(12):
+        print(f"{i} \t& \\begin{{tabular}}{{l|l}} {Mean[i][0]} & {STD[i][0]} \\\\ \\end{{tabular}} \n\t &  \\begin{{tabular}}{{l|l}} {Mean[i][1]} & {STD[i][1]} \\\\ \\end{{tabular}} \n\t &  \\begin{{tabular}}{{l|l}} {Mean[i][2]} & {STD[i][2]} \\\\ \end{{tabular}}\\\\ \n\t \hline")
 
 def attention_res(attention,head,r_start,r_end,length):
     assert head < len(attention)
-    attention = attention[head]
+    if head == -1:
+        attention = np.mean(attention, axis = 0)
+    else:
+        attention = attention[head]
     assert attention.shape == (max_seq_length,max_seq_length)
     su,su_r,su_nr = [],[],[]
     for i in range(length):
@@ -256,7 +259,7 @@ def load_dataset(tokenizer, evaluate=False, dataset_type = None):
     else:
         cache_file = os.path.join(input_dir,"roberta-base_train")
 
-    if os.path.exists(cache_file):# and False: #for new dataset
+    if os.path.exists(cache_file) :#and False: #for new dataset
         print("Loading cache",cache_file)
         features_and_dataset = torch.load(cache_file)
         features, dataset, examples = (
@@ -322,7 +325,7 @@ def main(isTraining, attn = False):
             model.to(device)
             model.eval()
             tokenizer = RobertaTokenizer.from_pretrained(output_directory, do_lower_case=True)
-            Write_predictions(model, tokenizer, device, dataset_type = 'RG')
+            Write_predictions(model, tokenizer, device, dataset_type = None)
 
 if __name__ == "__main__":
     #main(isTraining = True)
