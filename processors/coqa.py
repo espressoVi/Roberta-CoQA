@@ -575,6 +575,8 @@ class Processor(DataProcessor):
                         sent = j if inc else i
                 doc_tok = doc_tok[:sent]
 
+                if len(doc_tok) == 0:
+                    continue
                 if dataset_type == "RG":
                     if " ".join(doc_tok).find(_qas['raw_answer']) == -1 and _qas['raw_answer'] not in ['unknown','yes','no']:
                         doc_tok.append(_qas['raw_answer'])
@@ -591,8 +593,8 @@ class Processor(DataProcessor):
                 additional_answers=_qas['additional_answers'] if 'additional_answers' in _qas else None,
             )
 
-            if len(doc_tok) > 0:
-                examples.append(example)
+            examples.append(example)
+
         return examples
 
 

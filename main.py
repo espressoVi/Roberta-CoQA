@@ -15,7 +15,7 @@ from torch.nn import CrossEntropyLoss
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_combM"
+output_directory="Roberta_orig"
 pretrained_model="roberta-base"
 
 epochs = 1.0
@@ -203,6 +203,7 @@ def load_dataset(tokenizer, evaluate=False, dataset_type = None):
             processor = Processor()
             if evaluate:
                 examples = processor.get_examples("data", 2,filename=predict_file, threads=12, dataset_type = dataset_type)
+                print(len(examples))
             else:
                 #examples = processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = dataset_type)
                 examples = processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = "TS")
