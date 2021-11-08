@@ -571,15 +571,31 @@ class Processor(DataProcessor):
             if dataset_type is not None:
                 if dataset_type == "TS":
                     edge,inc = r_end,True
-                elif dataset_type == "R" or dataset_type == "RG":
+                elif dataset_type in ["R","RG"]:
                     edge,inc = r_start,False
+                    r_start,r_end = -1,-1
                 for i,j in _datum['annotated_context']['sentences']:
                     if edge >= i and edge <= j:
                         sent = j if inc else i
                 doc_tok = doc_tok[:sent]
-                if dataset_type in ["R","RG"]:
-                    doc_tok.append(_qas['raw_answer'])
-                    r_start,r_end = 0,len(doc_tok)
+                if len(doc_tok) == 0:
+                    continue
+                if dataset_type == "RG":
+                    gt = _qas['raw_answer']
+                    if gt not in ['unknown','yes','no']:
+                        gt_context = nlp(self.pre_proc(gt))
+                        _gt = self.process(gt_context)['word']
+                        found = " ".join(doc_tok).find(gt)
+                        if found == -1:
+                            r_start,r_end = len(doc_tok),len(doc_tok)+len(_gt)-1
+                            doc_tok.extend(_gt)
+                        else:
+                            for i in range(0,len(doc_tok)):
+                                if doc_tok[i:i+len(_gt)] == _gt:
+                                    r_start = i 
+                                    r_end = r_start + len(_gt)-1
+                            if r_start == r_end:
+                                continue
 
             example = CoqaExample(
                 qas_id = _datum['id'] + ' ' + str(_qas['turn_id']),
@@ -592,9 +608,7 @@ class Processor(DataProcessor):
                 rational_end_position = r_end,
                 additional_answers=_qas['additional_answers'] if 'additional_answers' in _qas else None,
             )
-
-            if len(doc_tok) > 0:
-                examples.append(example)
+            examples.append(example)
         return examples
 
 
