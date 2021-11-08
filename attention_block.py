@@ -2,11 +2,10 @@ import collections
 import glob
 import os
 import torch
-import pickle
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm, trange
 from transformers import (AdamW, AutoConfig, AutoTokenizer, get_linear_schedule_with_warmup)
-from processors.coqa import Extract_Features, Processor, Result,Attentions
+from processors.coqa import Extract_Features, Processor
 from processors.metrics import get_predictions
 from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
 import torch
@@ -15,16 +14,10 @@ import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 import numpy as np
 
-train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_comb"
 pretrained_model="roberta-base"
-
-epochs = 1.0
-evaluation_batch_size = 16
-train_batch_size = 4
+evaluation_batch_size = 64
 MIN_FLOAT = -1e30
-max_seq_length = 512
  
 class RobertaBaseModel(RobertaModel):
     def __init__(self,config, load_pre = False):
@@ -45,15 +38,15 @@ class RobertaBaseModel(RobertaModel):
         self.beta = 5.0
 
     def forward(self,input_ids,segment_ids=None,input_masks=None,start_positions=None,end_positions=None,rationale_mask=None,cls_idx=None, block = -1):
-        outputs = self.roberta(input_ids,attention_mask=input_masks,output_hidden_states=True,output_attentions=True)
-        _, roberta_pooled_output, hidden_states,attentions = outputs
+        outputs = self.roberta(input_ids,attention_mask=input_masks,output_hidden_states=True)#,output_attentions=True)
+        #_, roberta_pooled_output, hidden_states,attentions = outputs
+        _, roberta_pooled_output, hidden_states = outputs
         output_vector = hidden_states[block] 
-        attentions = list(attentions)
 
         start_end_logits = self.span_modelling(output_vector)
         start_logits, end_logits = start_end_logits.split(1, dim=-1)
         start_logits, end_logits = start_logits.squeeze(-1), end_logits.squeeze(-1)
-        #Rationale modelling 
+
         rationale_logits = self.relu(self.fc(output_vector))
         rationale_logits = self.rationale_modelling(rationale_logits)
         rationale_logits = torch.sigmoid(rationale_logits)
@@ -65,30 +58,26 @@ class RobertaBaseModel(RobertaModel):
         input_masks = input_masks.type(attention.dtype)
         attention = attention*input_masks + (1-input_masks)*MIN_FLOAT
         attention = F.softmax(attention, dim=-1)
-        attentions.append(attention)
 
-        attention_pooled_output = (attention.unsqueeze(-1) * output_vector).sum(dim=-2)
-        cls_output = torch.cat((attention_pooled_output,roberta_pooled_output),dim = -1)
+        return attention
+        #attention_pooled_output = (attention.unsqueeze(-1) * output_vector).sum(dim=-2)
+        #cls_output = torch.cat((attention_pooled_output,roberta_pooled_output),dim = -1)
+        #rationale_logits = rationale_logits.squeeze(-1)
+        #unk_logits = self.unk_modelling(cls_output)
+        #yes_no_logits = self.yes_no_modelling(cls_output)
+        #yes_logits, no_logits = yes_no_logits.split(1, dim=-1)
 
-        rationale_logits = rationale_logits.squeeze(-1)
-
-        unk_logits = self.unk_modelling(cls_output)
-        yes_no_logits = self.yes_no_modelling(cls_output)
-        yes_logits, no_logits = yes_no_logits.split(1, dim=-1)
-
-        return attentions
 
 def convert_to_list(tensor):
     return tensor.detach().cpu().tolist()
 
 def Write_attentions(model, tokenizer, device, dataset_type = None):
     dataset, examples, features = load_dataset(tokenizer, evaluate=True,dataset_type = dataset_type)
-
     evalutation_sampler = SequentialSampler(dataset)
     evaluation_dataloader = DataLoader(dataset, sampler=evalutation_sampler, batch_size=evaluation_batch_size)
     res = []
     for block in tqdm(range(1,13),desc = "Evaluating with block"):
-        su,cnt = 0,0
+        su = []
         for batch in evaluation_dataloader:
             model.eval()
             batch = tuple(t.to(device) for t in batch)
@@ -99,8 +88,7 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
             for i, example_index in enumerate(example_indices):
                 eval_feature = features[example_index.item()]
                 doc_tok = eval_feature.tokens
-                attentions = outputs
-                attentions = [output[i].detach().cpu().numpy() for output in attentions]
+                attention = outputs[i].detach().cpu().numpy()
                 rational_mask = np.array(eval_feature.rational_mask)
                 length =len(np.where(np.array(eval_feature.input_mask) == 1)[0])
                 _ones = np.where(rational_mask == 1)[0]
@@ -108,14 +96,13 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
                     r_start,r_end = _ones[0],_ones[-1]+1
                 except:
                     continue
-                su += np.sum(attentions[12][r_start:r_end])
-                cnt+=1
-        res.append(su/cnt)
+                assert 0<= np.sum(attention[r_start:r_end]) <= 1
+                su.append(np.sum(attention[r_start:r_end]))
+        res.append((np.mean(su),np.std(su)))
     for i in range(12):
-        print(f"{i} & {res[i]:.6f} \\\\")
+        print(f"{i} & {res[i][0]:.8f} & {res[i][1]:.8f}\\\\")
 
 def load_dataset(tokenizer, evaluate=False, dataset_type = None):
-
     processor = Processor()
     examples = processor.get_examples("data", 2,filename=predict_file, threads=12, dataset_type = dataset_type)
     features, dataset = Extract_Features(examples=examples,
@@ -135,5 +122,5 @@ def main(model_dir,dataset_type):
         Write_attentions(model, tokenizer, device, dataset_type = i)
 
 if __name__ == "__main__":
-    main(model_dir = "Roberta_orig",dataset_type = ['TS','RG'])
-    main(model_dir = "Roberta_combM",dataset_type = ['TS','RG'])
+    main(model_dir = "Roberta_orig",dataset_type = ['RG','TS',None])
+    main(model_dir = "Roberta_comb2",dataset_type = [None,'TS','RG'])
