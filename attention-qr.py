@@ -6,7 +6,7 @@ import pickle
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm, trange
 from transformers import (AdamW, AutoConfig, AutoTokenizer, get_linear_schedule_with_warmup)
-from processors.coqa import Extract_Features, Processor, Result,Attentions
+from processors.coqa import Extract_Features, Processor
 from processors.metrics import get_predictions
 from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
 import torch
@@ -17,12 +17,9 @@ import numpy as np
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_orig"
 pretrained_model="roberta-base"
 
-epochs = 1.0
 evaluation_batch_size = 16
-train_batch_size = 4
 MIN_FLOAT = -1e30
 max_seq_length = 512
  
@@ -109,17 +106,19 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
             except:
                 continue
             for j in range(12):
-                #qr_results[j].append(attention_qr(attentions[j], -1, r_start,r_end,q_start,q_end, length))
+                qr_results[j].append(attention_qr(attentions[j], -1, r_start,r_end,q_start,q_end, length))
                 sep_results[j].append(attention_sep(attentions[j], -1, seps))
-    #qr_results = np.array(qr_results)
+    qr_results = np.array(qr_results)
     sep_results = np.array(sep_results)
     
-    #Mean_qr = np.mean(qr_results,axis = 1)
-    #STD_qr = np.std(qr_results, axis = 1)
-    #for i in range(12):
-    #    print(f'{i} &\t {Mean_qr[i]} & \t{STD_qr[i]}\\\\')
+    Mean_qr = np.mean(qr_results,axis = 1)
+    STD_qr = np.std(qr_results, axis = 1)
+    print('eta QR')
+    for i in range(12):
+        print(f'{i} &\t {Mean_qr[i]} & \t{STD_qr[i]}\\\\')
     Mean = np.mean(sep_results,axis = 1)
     STD = np.std(sep_results, axis = 1)
+    print('p SEP')
     for i in range(12):
         print(f'{i} &\t {Mean[i]} & \t{STD[i]}\\\\')
 
@@ -166,11 +165,11 @@ def main(model_dir, dataset_type):
     model.load_state_dict(torch.load(os.path.join(model_dir,'tweights.pt')))
     model.to(device)
     model.eval()
-    tokenizer = RobertaTokenizer.from_pretrained(output_directory, do_lower_case=True)
+    tokenizer = RobertaTokenizer.from_pretrained(model_dir, do_lower_case=True)
     for j in dataset_type:
         print(model_dir,j)
         Write_attentions(model, tokenizer, device, dataset_type = j)
 
 if __name__ == "__main__":
     main(model_dir = "Roberta_orig", dataset_type = ['RG','TS',None])
-    main(model_dir = "Roberta_combM", dataset_type = ['TS',None, 'RG'])
+    main(model_dir = "Roberta_comb2", dataset_type = ['TS',None, 'RG'])
