@@ -202,7 +202,6 @@ def Extract_Feature(example, tokenizer, max_seq_length = 512, doc_stride = 128, 
                          end_position=end_position,
                          cls_idx=slice_cls_idx,
                          rational_mask=rational_mask))
-#        print(f"Tokens : {' '.join(tokens)} \n Answer : { (' '.join(tokens[start_position:end_position+1]) )}")
     return features
 
 
@@ -257,8 +256,6 @@ def Extract_Features(examples, tokenizer, max_seq_length, doc_stride, max_query_
 
 
 class CoqaFeatures(object):
-    """A single set of features of data."""
-
     def __init__(self,
                  unique_id,
                  example_index,
@@ -286,9 +283,6 @@ class CoqaFeatures(object):
         self.end_position = end_position
         self.cls_idx = cls_idx
         self.rational_mask = rational_mask
-    def __repr__(self):
-        return "\/".join(self.tokens)
-
 
 class CoqaExample(object):
     def __init__(
@@ -312,20 +306,6 @@ class CoqaExample(object):
         self.additional_answers = additional_answers
         self.rational_start_position = rational_start_position
         self.rational_end_position = rational_end_position
-
-    def __str__(self):
-        return self.__repr__()
-
-    def __repr__(self):
-        m = " ".join(self.doc_tokens)
-        s = f"qas_id: {self.qas_id} \n Question_text: {self.question_text} \n Answer : {self.orig_answer_text} \n Doc Tokens: {m} " 
-        if self.start_position and self.end_position:
-            s += f"\n Position: {self.start_position} {self.end_position} {' '.join(self.doc_tokens[self.start_position:self.end_position+1])}"
-        if self.rational_start_position and self.rational_end_position:
-            s += f"\n Rationale: {self.rational_start_position} {self.rational_end_position} {' '.join(self.doc_tokens[self.rational_start_position:self.rational_end_position+1])}"
-
-        return s
-
 
 class Processor(DataProcessor):
     train_file = "coqa-train-v1.0.json"
@@ -363,16 +343,13 @@ class Processor(DataProcessor):
 
     def process(self, parsed_text):
         output = {'word': [], 'offsets': [], 'sentences': []}
-
         for token in parsed_text:
             output['word'].append(self._str(token.text))
             output['offsets'].append((token.idx, token.idx + len(token.text)))
-
         word_idx = 0
         for sent in parsed_text.sents:
             output['sentences'].append((word_idx, word_idx + len(sent)))
             word_idx += len(sent)
-
         assert word_idx == len(output['word'])
         return output
 
@@ -383,12 +360,10 @@ class Processor(DataProcessor):
             while p < len(raw_text) and re.match('\s', raw_text[p]):
                 p += 1
             if raw_text[p:p + len(token)] != token:
-                print('something is wrong! token', token, 'raw_text:',
-                      raw_text)
+                print('something is wrong! token', token, 'raw_text:', raw_text)
 
             raw_context_offsets.append((p, p + len(token)))
             p += len(token)
-
         return raw_context_offsets
 
     def find_span(self, offsets, start, end):
@@ -402,8 +377,6 @@ class Processor(DataProcessor):
         return (start_index, end_index)
 
     def normalize_answer(self, s):
-        """Lower text and remove punctuation, storys and extra whitespace."""
-
         def remove_articles(text):
             regex = re.compile(r'\b(a|an|the)\b', re.UNICODE)
             return re.sub(regex, ' ', text)
@@ -417,7 +390,6 @@ class Processor(DataProcessor):
 
         def lower(text):
             return text.lower()
-
         return white_space_fix(remove_articles(remove_punc(lower(s))))
 
     def find_span_with_gt(self, context, offsets, ground_truth):
@@ -457,9 +429,6 @@ class Processor(DataProcessor):
         return (start_index, end_index)
 
     def get_examples(self, data_dir, history_len, filename=None, threads=1,dataset_type = None):
-        """
-        Returns the training examples from the data directory.      
-        """
         if data_dir is None:
             data_dir = ""
 
@@ -564,12 +533,11 @@ class Processor(DataProcessor):
 
             doc_tok = _datum['annotated_context']['word']
 
-            if dataset_type is not None:
+            if dataset_type is in ['TS','RG']:
                 if dataset_type == "TS":
                     edge,inc = r_end,True
-                elif dataset_type == "R" or dataset_type == "RG":
+                elif dataset_type == "RG":
                     edge,inc = r_start,False
-                    r_start,r_end = -1,-1
                 for i,j in _datum['annotated_context']['sentences']:
                     if edge >= i and edge <= j:
                         sent = j if inc else i
@@ -580,6 +548,7 @@ class Processor(DataProcessor):
                 if dataset_type == "RG":
                     if " ".join(doc_tok).find(_qas['raw_answer']) == -1 and _qas['raw_answer'] not in ['unknown','yes','no']:
                         doc_tok.append(_qas['raw_answer'])
+                    r_start,r_end = -1,-1
 
             example = CoqaExample(
                 qas_id = _datum['id'] + ' ' + str(_qas['turn_id']),
@@ -592,7 +561,6 @@ class Processor(DataProcessor):
                 rational_end_position = r_end,
                 additional_answers=_qas['additional_answers'] if 'additional_answers' in _qas else None,
             )
-
             examples.append(example)
 
         return examples

@@ -15,14 +15,13 @@ from torch.nn import CrossEntropyLoss
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_comb2"
+output_directory="Roberta_final"
 pretrained_model="roberta-base"
 
 epochs = 1.0
 evaluation_batch_size = 16
 train_batch_size = 4
 MIN_FLOAT = -1e30
-#master 
 class RobertaBaseModel(RobertaModel):
 
     #   Initialize Layers for our model
@@ -99,15 +98,10 @@ def train(train_dataset, model, tokenizer, device):
     train_sampler = RandomSampler(train_dataset) 
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=train_batch_size)
     t_total = len(train_dataloader) // 1 * epochs
-
-    # Preparing optimizer and scheduler
-    
     optimizer_parameters = [{"params": [p for n, p in model.named_parameters() if not any(nd in n for nd in ["bias", "LayerNorm.weight"])],"weight_decay": 0.01,},
                             {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in ["bias", "LayerNorm.weight"])], "weight_decay": 0.0}]
     optimizer = AdamW(optimizer_parameters,lr=1e-5, eps=1e-8)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=2000, num_training_steps=t_total)
-
-    # Check if saved optimizer or scheduler states exist
     if os.path.isfile(os.path.join(pretrained_model, "optimizer.pt")) and os.path.isfile(os.path.join(pretrained_model, "scheduler.pt")):
         optimizer.load_state_dict(torch.load(
             os.path.join(pretrained_model, "optimizer.pt")))
@@ -130,7 +124,6 @@ def train(train_dataset, model, tokenizer, device):
             loss = model(**inputs)
             loss.backward()
             train_loss += loss.item()
-             #   optimizing training parameters
             optimizer.step()
             scheduler.step()  
             model.zero_grad()
@@ -138,7 +131,6 @@ def train(train_dataset, model, tokenizer, device):
             epoch_iterator.set_description("Loss :%f" % (train_loss/(4*counter)))
             epoch_iterator.refresh()
 
-            #   Saving model weights every 1000 iterations
             if counter % 1000 == 0:
                 output_dir = os.path.join(output_directory, "model_weights")
                 if not os.path.exists(output_dir):
@@ -156,8 +148,6 @@ def Write_predictions(model, tokenizer, device, dataset_type = None):
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
-        
-    #   wrtiting predictions once training is complete
     evalutation_sampler = SequentialSampler(dataset)
     evaluation_dataloader = DataLoader(dataset, sampler=evalutation_sampler, batch_size=evaluation_batch_size)
     mod_results = []
@@ -176,68 +166,56 @@ def Write_predictions(model, tokenizer, device, dataset_type = None):
             result = Result(unique_id=unique_id, start_logits=start_logits, end_logits=end_logits, yes_logits=yes_logits, no_logits=no_logits, unk_logits=unk_logits)
             mod_results.append(result)
 
-    # Get predictions for development dataset and store it in predictions.json
     output_prediction_file = os.path.join(output_directory, "predictions.json")
     get_predictions(examples, features, mod_results, 20, 30, True, output_prediction_file, False, tokenizer)
 
 
 def load_dataset(tokenizer, evaluate=False, dataset_type = None):
-    #   converting raw coqa dataset into features to be processed by ROBERTA   
-    input_dir = "data" if "data" else "."
-    if evaluate:
-        cache_file = os.path.join(input_dir,"roberta-base_dev")
-    else:
-        cache_file = os.path.join(input_dir,"roberta-base_train")
+    input_dir = "data"
+    cache_file = os.path.join(input_dir,"roberta-base_dev") if evaluate else os.path.join(input_dir,"roberta-base_train")
 
-    if os.path.exists(cache_file) and False:
+    if os.path.exists(cache_file):
         print("Loading cache",cache_file)
         features_and_dataset = torch.load(cache_file)
-        features, dataset, examples = (
-            features_and_dataset["features"],features_and_dataset["dataset"],features_and_dataset["examples"])
+        features, dataset, examples = (features_and_dataset["features"],features_and_dataset["dataset"],features_and_dataset["examples"])
     else:
         print("Creating features from dataset file at", input_dir)
 
-        if not "data" and ((evaluate and not predict_file) or (not evaluate and not train_file)):
-            raise ValueError("predict_file or train_file not found")
+        if ((evaluate and not predict_file) or (not evaluate and not train_file)):
+            raise ValueError("predict_file or train_file name not found")
         else:
             processor = Processor()
             if evaluate:
                 examples = processor.get_examples("data", 2,filename=predict_file, threads=12, dataset_type = dataset_type)
-                print(len(examples))
             else:
-                #examples = processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = dataset_type)
-                examples = processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = "TS")
-                examples.extend(processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = None))
-                examples.extend(processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = 'RG'))
+                examples = []
+                for datas in dataset_type:
+                    examples.extend(processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = datas))
 
         features, dataset = Extract_Features(examples=examples,
                 tokenizer=tokenizer,max_seq_length=512, doc_stride=128, max_query_length=64, is_training=not evaluate, threads=12)
-    #   caching it in a cache file to reduce time
         torch.save({"features": features, "dataset": dataset, "examples": examples}, cache_file)
     if evaluate:
         return dataset, examples, features
     return dataset
 
 
-def main(isTraining):
+def main(isTraining, dataset_type):
     assert torch.cuda.is_available()
     device = torch.device('cuda')
     config = RobertaConfig.from_pretrained(pretrained_model)
 
     if isTraining:
-        #   initialize configurations and tokenizer of Roberta model 
         tokenizer = RobertaTokenizer.from_pretrained(pretrained_model)
         model = RobertaBaseModel(config, load_pre = True)
         model.to(device)
-
         if os.path.exists(output_directory):
             raise ValueError(f"Output directory {output_directory}  already exists, Change output_directory name")
         else:
             os.makedirs(output_directory)
         
-        train_dataset = load_dataset(tokenizer, evaluate=False)
+        train_dataset = load_dataset(tokenizer, evaluate=False, dataset_type = dataset_type)
         train_loss = train(train_dataset, model, tokenizer, device)
-        #   save Model
         tokenizer.save_pretrained(output_directory)
         torch.save(model.state_dict(), os.path.join(output_directory,'tweights.pt'))
 
@@ -247,8 +225,7 @@ def main(isTraining):
         model.to(device)
         model.eval()
         tokenizer = RobertaTokenizer.from_pretrained(output_directory, do_lower_case=True)
-        Write_predictions(model, tokenizer, device, dataset_type = 'RG')
+        Write_predictions(model, tokenizer, device, dataset_type = dataset_type[0])
 
 if __name__ == "__main__":
-    #main(isTraining = True)
-    main(isTraining = False)
+    main(isTraining = False,dataset_type = ['RG'])
