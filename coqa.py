@@ -13,6 +13,10 @@ from torch.utils.data import TensorDataset
 from tqdm import tqdm
 from processors.utils import DataProcessor
 
+
+#   This code has been very heavily adapted/used from the hugging face's Roberta implmentation on squad dataset. 
+#   https://github.com/huggingface/transformers/blob/master/src/transformers/data/processors/squad.py
+
 def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_answer_text):
     """Returns tokenized answer spans that better match the annotated answer."""
     tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
@@ -98,6 +102,7 @@ def Extract_Feature(example, tokenizer, max_seq_length = 512, doc_stride = 128, 
         
     # The -4 accounts for <s>, </s></s> and </s>
     max_tokens_for_doc = max_seq_length - len(query_tokens) - 4
+
 
     _DocSpan = collections.namedtuple("DocSpan", ["start", "length"])
     doc_spans = []
@@ -201,6 +206,7 @@ def Extract_Feature(example, tokenizer, max_seq_length = 512, doc_stride = 128, 
                          end_position=end_position,
                          cls_idx=slice_cls_idx,
                          rational_mask=rational_mask))
+#        print(f"Tokens : {' '.join(tokens)} \n Answer : { (' '.join(tokens[start_position:end_position+1]) )}")
     return features
 
 
@@ -255,6 +261,8 @@ def Extract_Features(examples, tokenizer, max_seq_length, doc_stride, max_query_
 
 
 class CoqaFeatures(object):
+    """A single set of features of data."""
+
     def __init__(self,
                  unique_id,
                  example_index,
@@ -282,6 +290,9 @@ class CoqaFeatures(object):
         self.end_position = end_position
         self.cls_idx = cls_idx
         self.rational_mask = rational_mask
+    def __repr__(self):
+        return "\/".join(self.tokens)
+
 
 class CoqaExample(object):
     def __init__(
@@ -305,6 +316,20 @@ class CoqaExample(object):
         self.additional_answers = additional_answers
         self.rational_start_position = rational_start_position
         self.rational_end_position = rational_end_position
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        m = " ".join(self.doc_tokens)
+        s = f"qas_id: {self.qas_id} \n Question_text: {self.question_text} \n Answer : {self.orig_answer_text} \n Doc Tokens: {m} " 
+        if self.start_position and self.end_position:
+            s += f"\n Position: {self.start_position} {self.end_position} {' '.join(self.doc_tokens[self.start_position:self.end_position+1])}"
+        if self.rational_start_position and self.rational_end_position:
+            s += f"\n Rationale: {self.rational_start_position} {self.rational_end_position} {' '.join(self.doc_tokens[self.rational_start_position:self.rational_end_position+1])}"
+
+        return s
+
 
 class Processor(DataProcessor):
     train_file = "coqa-train-v1.0.json"
@@ -342,13 +367,16 @@ class Processor(DataProcessor):
 
     def process(self, parsed_text):
         output = {'word': [], 'offsets': [], 'sentences': []}
+
         for token in parsed_text:
             output['word'].append(self._str(token.text))
             output['offsets'].append((token.idx, token.idx + len(token.text)))
+
         word_idx = 0
         for sent in parsed_text.sents:
             output['sentences'].append((word_idx, word_idx + len(sent)))
             word_idx += len(sent)
+
         assert word_idx == len(output['word'])
         return output
 
@@ -359,10 +387,12 @@ class Processor(DataProcessor):
             while p < len(raw_text) and re.match('\s', raw_text[p]):
                 p += 1
             if raw_text[p:p + len(token)] != token:
-                print('something is wrong! token', token, 'raw_text:', raw_text)
+                print('something is wrong! token', token, 'raw_text:',
+                      raw_text)
 
             raw_context_offsets.append((p, p + len(token)))
             p += len(token)
+
         return raw_context_offsets
 
     def find_span(self, offsets, start, end):
@@ -376,6 +406,8 @@ class Processor(DataProcessor):
         return (start_index, end_index)
 
     def normalize_answer(self, s):
+        """Lower text and remove punctuation, storys and extra whitespace."""
+
         def remove_articles(text):
             regex = re.compile(r'\b(a|an|the)\b', re.UNICODE)
             return re.sub(regex, ' ', text)
@@ -389,6 +421,7 @@ class Processor(DataProcessor):
 
         def lower(text):
             return text.lower()
+
         return white_space_fix(remove_articles(remove_punc(lower(s))))
 
     def find_span_with_gt(self, context, offsets, ground_truth):
@@ -427,21 +460,10 @@ class Processor(DataProcessor):
                 end_index = i
         return (start_index, end_index)
 
-    def cut_sentence(self,doc_tok, r_start, r_end,dataset_type, nlp_context):
-        if dataset_type in ['TS','RG']:
-            if dataset_type == "TS":
-                edge,inc = r_end,True
-            elif dataset_type == "RG":
-                edge,inc = r_start,False
-            for i,j in nlp_context:
-                if edge >= i and edge <= j:
-                    sent = j if inc else i
-            doc_tok = doc_tok[:sent]
-            return doc_tok
-        else:
-            return doc_tok
-
-    def get_examples(self, data_dir, history_len, filename=None, threads=1,dataset_type = None, attention = False):
+    def get_examples(self, data_dir, history_len, filename=None, threads=1,dataset_type = None):
+        """
+        Returns the training examples from the data directory.      
+        """
         if data_dir is None:
             data_dir = ""
 
@@ -452,7 +474,7 @@ class Processor(DataProcessor):
 
         threads = min(threads, cpu_count())
         with Pool(threads) as p:
-            annotate_ = partial(self._create_examples, history_len=history_len, dataset_type = dataset_type, attention = attention)
+            annotate_ = partial(self._create_examples, history_len=history_len, dataset_type = dataset_type)
             examples = list(tqdm(
                 p.imap(annotate_, input_data),
                 total=len(input_data),
@@ -461,7 +483,7 @@ class Processor(DataProcessor):
         examples = [item for sublist in examples for item in sublist]
         return examples
 
-    def _create_examples(self, input_data, history_len,dataset_type = None, attention = False):
+    def _create_examples(self, input_data, history_len,dataset_type = None):
         nlp = spacy.load('en_core_web_sm', parser=False)
         examples = []
         datum = input_data
@@ -545,33 +567,36 @@ class Processor(DataProcessor):
                 long_questions.append(long_question)
 
             doc_tok = _datum['annotated_context']['word']
-            doc_tok = self.cut_sentence(doc_tok, r_start, r_end, dataset_type,_datum['annotated_context']['sentences'])
-            if len(doc_tok) == 0:
-                continue
 
-            if dataset_type == "RG":
-                gt = _qas['raw_answer']
-                gt_context = nlp(self.pre_proc(gt))
-                _gt = self.process(gt_context)['word']
-                found = " ".join(doc_tok).find(gt)
-                if gt not in ['unknown','yes','no']:
-                    if found == -1 and not attention:
-                        doc_tok.append(gt)
-                        r_start,r_end = -1,-1
-                    elif found != -1 and not attention:
-                        r_start,r_end = -1,-1
-                    elif found == -1 and attention:
-                        r_start,r_end = len(doc_tok),len(doc_tok)+len(_gt)-1
-                        doc_tok.extend(_gt)
+            if dataset_type is not None:
+                if dataset_type == "TS":
+                    edge,inc = r_end,True
+                elif dataset_type in ["R","RG"]:
+                    edge,inc = r_start,False
+                    r_start,r_end = -1,-1
+                for i,j in _datum['annotated_context']['sentences']:
+                    if edge >= i and edge <= j:
+                        sent = j if inc else i
+                doc_tok = doc_tok[:sent]
+                if len(doc_tok) == 0:
+                    continue
+                if dataset_type == "RG":
+                    gt = _qas['raw_answer']
+                    if gt not in ['unknown','yes','no']:
+                        gt_context = nlp(self.pre_proc(gt))
+                        _gt = self.process(gt_context)['word']
+                        found = " ".join(doc_tok).find(gt)
+                        if found == -1:
+                            r_start,r_end = len(doc_tok),len(doc_tok)+len(_gt)-1
+                            doc_tok.extend(_gt)
+                        else:
+                            for i in range(0,len(doc_tok)):
+                                if doc_tok[i:i+len(_gt)] == _gt:
+                                    r_start = i 
+                                    r_end = r_start + len(_gt)-1
+                            if r_start == r_end:
+                                continue
                     else:
-                        for i in range(0,len(doc_tok)):
-                            if doc_tok[i:i+len(_gt)] == _gt:
-                                r_start = i 
-                                r_end = r_start + len(_gt)-1
-                        if r_start == r_end:
-                            continue
-                else:
-                    if attention:
                         continue
 
             example = CoqaExample(
@@ -586,15 +611,4 @@ class Processor(DataProcessor):
                 additional_answers=_qas['additional_answers'] if 'additional_answers' in _qas else None,
             )
             examples.append(example)
-
         return examples
-
-
-class Result(object):
-    def __init__(self, unique_id, start_logits, end_logits, yes_logits, no_logits, unk_logits):
-        self.unique_id = unique_id
-        self.start_logits = start_logits
-        self.end_logits = end_logits
-        self.yes_logits = yes_logits
-        self.no_logits = no_logits
-        self.unk_logits = unk_logits

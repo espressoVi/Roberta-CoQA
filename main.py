@@ -15,7 +15,7 @@ from torch.nn import CrossEntropyLoss
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_final"
+output_directory="Roberta_combined"
 pretrained_model="roberta-base"
 
 epochs = 1.0
@@ -23,14 +23,10 @@ evaluation_batch_size = 16
 train_batch_size = 4
 MIN_FLOAT = -1e30
 class RobertaBaseModel(RobertaModel):
-
-    #   Initialize Layers for our model
     def __init__(self,config, load_pre = False):
         super(RobertaBaseModel,self).__init__(config)
         self.roberta = RobertaModel.from_pretrained(pretrained_model, config=config,) if load_pre else RobertaModel(config)
-
         hidden_size = config.hidden_size
-
         self.fc = nn.Linear(hidden_size,hidden_size, bias = False)
         self.fc2 = nn.Linear(hidden_size,hidden_size, bias = False)
         self.rationale_modelling = nn.Linear(hidden_size,1, bias = False)
