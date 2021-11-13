@@ -143,7 +143,6 @@ def attention_sep(attention,head,seps):
     return p
 
 def load_dataset(tokenizer, evaluate=True, dataset_type = None):
-    cache_file = os.path.join('data',"roberta-base_dev")
     processor = Processor()
     examples = processor.get_examples("data", 2,filename=predict_file, threads=12, dataset_type = dataset_type, attention = True)
     features, dataset = Extract_Features(examples=examples,

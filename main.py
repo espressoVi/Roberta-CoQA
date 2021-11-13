@@ -207,7 +207,6 @@ def manager(isTraining, dataset_type, output_directory):
         model = RobertaBaseModel(config)
         model.load_state_dict(torch.load(os.path.join(output_directory,'tweights.pt')))
         model.to(device)
-        model.eval()
         tokenizer = RobertaTokenizer.from_pretrained(output_directory, do_lower_case=True)
         Write_predictions(model, tokenizer, device, dataset_type = dataset_type[0], output_directory = output_directory)
 

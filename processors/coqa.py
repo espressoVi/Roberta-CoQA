@@ -14,7 +14,7 @@ from tqdm import tqdm
 from processors.utils import DataProcessor
 
 class CoqaExample(object):
-    """Sngle CoQA example"""
+    """Single CoQA example"""
     def __init__(
             self,
             qas_id,
@@ -77,9 +77,7 @@ class Result(object):
         self.unk_logits = unk_logits
 
 def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_answer_text):
-    """Returns tokenized answer spans that better match the annotated answer."""
     tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
-
     for new_start in range(input_start, input_end + 1):
         for new_end in range(input_end, new_start - 1, -1):
             text_span = " ".join(doc_tokens[new_start: (new_end + 1)])
@@ -88,9 +86,7 @@ def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_ans
 
     return (input_start, input_end)
 
-
 def _check_is_max_context(doc_spans, cur_span_index, position):
-    """Check if this is the 'max context' doc span for the token."""
     best_score = None
     best_span_index = None
     for (span_index, doc_span) in enumerate(doc_spans):
@@ -218,16 +214,6 @@ class Processor(DataProcessor):
                         best_f1 = f1
                         best_span = (ls[i], ls[j])
         return best_span
-
-    def find_span(self, offsets, start, end):
-        start_index = -1
-        end_index = -1
-        for i, offset in enumerate(offsets):
-            if (start_index < 0) or (start >= offset[0]):
-                start_index = i
-            if (end_index < 0) and (end <= offset[1]):
-                end_index = i
-        return (start_index, end_index)
 
     def cut_sentence(self,doc_tok, r_start, r_end,dataset_type, nlp_context):
         if dataset_type in ['TS','RG']:
