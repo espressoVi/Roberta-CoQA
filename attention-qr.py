@@ -1,5 +1,3 @@
-import collections
-import glob
 import os
 import torch
 import pickle
@@ -7,17 +5,16 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm, trange
 from transformers import (AdamW, AutoConfig, AutoTokenizer, get_linear_schedule_with_warmup)
 from processors.coqa import Extract_Features, Processor
-from processors.metrics import get_predictions
 from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 import numpy as np
+import getopt,sys
 
-predict_file="coqa-train-v1.1.json"
+predict_file="coqa-dev-v1.0.json"
 pretrained_model="roberta-base"
-
 evaluation_batch_size = 16
 MIN_FLOAT = -1e30
 max_seq_length = 512
@@ -26,9 +23,7 @@ class RobertaBaseModel(RobertaModel):
     def __init__(self,config, load_pre = False):
         super(RobertaBaseModel,self).__init__(config)
         self.roberta = RobertaModel.from_pretrained(pretrained_model, config=config,) if load_pre else RobertaModel(config)
-
         hidden_size = config.hidden_size
-
         self.fc = nn.Linear(hidden_size,hidden_size, bias = False)
         self.fc2 = nn.Linear(hidden_size,hidden_size, bias = False)
         self.rationale_modelling = nn.Linear(hidden_size,1, bias = False)
@@ -72,10 +67,7 @@ class RobertaBaseModel(RobertaModel):
 
         return attentions
 
-def convert_to_list(tensor):
-    return tensor.detach().cpu().tolist()
-
-def Write_attentions(model, tokenizer, device, dataset_type = None):
+def Write_attentions(model, tokenizer, device, dataset_type = None, output_directory = None):
     dataset, examples, features = load_dataset(tokenizer, evaluate=True,dataset_type = dataset_type)
     evalutation_sampler = SequentialSampler(dataset)
     evaluation_dataloader = DataLoader(dataset, sampler=evalutation_sampler, batch_size=evaluation_batch_size)
@@ -111,14 +103,18 @@ def Write_attentions(model, tokenizer, device, dataset_type = None):
     
     Mean_qr = np.mean(qr_results,axis = 1)
     STD_qr = np.std(qr_results, axis = 1)
-    print('eta QR')
-    for i in range(12):
-        print(f'{i} &\t {Mean_qr[i]} & \t{STD_qr[i]}\\\\')
-    Mean = np.mean(sep_results,axis = 1)
-    STD = np.std(sep_results, axis = 1)
-    print('p SEP')
-    for i in range(12):
-        print(f'{i} &\t {Mean[i]} & \t{STD[i]}\\\\')
+    Mean_sep = np.mean(sep_results,axis = 1)
+    STD_sep = np.std(sep_results, axis = 1)
+    qrFile = os.path.join(output_directory,f'etaQR_{dataset_type}.txt')
+    sepFile = os.path.join(output_directory,f'pSEP_{dataset_type}.txt')
+    with open(qrFile,'w') as f:
+        f.write('Block \tMean \tSTD\n')
+        for i in range(12):
+            f.write(f'{i} \t{Mean_qr[i]} \t{STD_qr[i]}\n')
+    with open(sepFile,'w') as f:
+        f.write('Block \tMean \tSTD\n')
+        for i in range(12):
+            f.write(f'{i} \t{Mean_sep[i]} \t{STD_sep[i]}\n')
 
 def attention_qr(attention,head,r_start,r_end,q_start,q_end,length):
     assert head < len(attention)
@@ -146,7 +142,6 @@ def attention_sep(attention,head,seps):
         p += np.mean(attention[:,i])
     return p
 
-
 def load_dataset(tokenizer, evaluate=True, dataset_type = None):
     cache_file = os.path.join('data',"roberta-base_dev")
     processor = Processor()
@@ -155,19 +150,43 @@ def load_dataset(tokenizer, evaluate=True, dataset_type = None):
             tokenizer=tokenizer,max_seq_length=512, doc_stride=128, max_query_length=64, is_training=not evaluate, threads=12)
     return dataset, examples, features
 
-def main(model_dir, dataset_type):
+def manager(model_dir, dataset_type):
     assert torch.cuda.is_available()
     device = torch.device('cuda')
     config = RobertaConfig.from_pretrained(pretrained_model)
     model = RobertaBaseModel(config)
     model.load_state_dict(torch.load(os.path.join(model_dir,'tweights.pt')))
     model.to(device)
-    model.eval()
     tokenizer = RobertaTokenizer.from_pretrained(model_dir, do_lower_case=True)
     for j in dataset_type:
         print(model_dir,j)
-        Write_attentions(model, tokenizer, device, dataset_type = j)
+        Write_attentions(model, tokenizer, device, dataset_type = j,output_directory = model_dir)
+
+def main():
+    output_directory = "Roberta"
+    argumentList = sys.argv[1:]
+    options = "ho:"
+    long_options = ["help", "output="]
+    try:
+        arguments, values = getopt.getopt(argumentList, options, long_options)
+        for currentArgument, currentValue in arguments:
+            if currentArgument in ("-h", "--Help"):
+                print ("""python attetion-qr.py --output [directory name]
+                        --output [dir_name] is the output directory to load weights from and write
+                        values to.
+                        e.g. python main.py --output Roberta_comb
+                        for eta and p_sep values for model stored at Roberta_comb""")
+                return
+     
+            elif currentArgument in ("-o", "--output"):
+                output_directory = currentValue
+            else:
+                print('See "python main.py --help" for usage')
+                return
+
+    except getopt.error as err:
+        print (str(err))
+    manager(model_dir = output_directory, dataset_type = ['RG','TS',None])
 
 if __name__ == "__main__":
-    main(model_dir = "Roberta_orig", dataset_type = ['TS',None])
-    main(model_dir = "Roberta_comb2", dataset_type = ['TS',None, 'RG'])
+    main()

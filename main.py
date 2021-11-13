@@ -1,5 +1,3 @@
-import collections
-import glob
 import os
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
@@ -12,16 +10,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
+import getopt,sys
 
 train_file="coqa-train-v1.0.json"
 predict_file="coqa-dev-v1.0.json"
-output_directory="Roberta_combined"
 pretrained_model="roberta-base"
-
 epochs = 1.0
 evaluation_batch_size = 16
 train_batch_size = 4
 MIN_FLOAT = -1e30
+
 class RobertaBaseModel(RobertaModel):
     def __init__(self,config, load_pre = False):
         super(RobertaBaseModel,self).__init__(config)
@@ -35,7 +33,6 @@ class RobertaBaseModel(RobertaModel):
         self.unk_modelling = nn.Linear(2*hidden_size,1, bias = False)
         self.yes_no_modelling = nn.Linear(2*hidden_size,2, bias = False)
         self.relu = nn.ReLU()
-
         self.beta = 5.0
 
     def forward(self,input_ids,segment_ids=None,input_masks=None,start_positions=None,end_positions=None,rationale_mask=None,cls_idx=None):
@@ -138,8 +135,7 @@ def train(train_dataset, model, tokenizer, device):
                 torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
     return train_loss/counter
 
-
-def Write_predictions(model, tokenizer, device, dataset_type = None):
+def Write_predictions(model, tokenizer, device, dataset_type = None, output_directory = None):
     dataset, examples, features = load_dataset(tokenizer, evaluate=True,dataset_type = dataset_type)
 
     if not os.path.exists(output_directory):
@@ -168,35 +164,27 @@ def Write_predictions(model, tokenizer, device, dataset_type = None):
 
 def load_dataset(tokenizer, evaluate=False, dataset_type = None):
     input_dir = "data"
-    cache_file = os.path.join(input_dir,"roberta-base_dev") if evaluate else os.path.join(input_dir,"roberta-base_train")
+    print("Creating features from dataset file at", input_dir)
 
-    if os.path.exists(cache_file):
-        print("Loading cache",cache_file)
-        features_and_dataset = torch.load(cache_file)
-        features, dataset, examples = (features_and_dataset["features"],features_and_dataset["dataset"],features_and_dataset["examples"])
+    if ((evaluate and not predict_file) or (not evaluate and not train_file)):
+        raise ValueError("predict_file or train_file name not found")
     else:
-        print("Creating features from dataset file at", input_dir)
-
-        if ((evaluate and not predict_file) or (not evaluate and not train_file)):
-            raise ValueError("predict_file or train_file name not found")
+        processor = Processor()
+        if evaluate:
+            examples = processor.get_examples("data", 2,filename=predict_file, threads=12, dataset_type = dataset_type)
         else:
-            processor = Processor()
-            if evaluate:
-                examples = processor.get_examples("data", 2,filename=predict_file, threads=12, dataset_type = dataset_type)
-            else:
-                examples = []
-                for datas in dataset_type:
-                    examples.extend(processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = datas))
+            examples = []
+            for datas in dataset_type:
+                examples.extend(processor.get_examples("data", 2,filename=train_file, threads=12,dataset_type = datas))
 
-        features, dataset = Extract_Features(examples=examples,
-                tokenizer=tokenizer,max_seq_length=512, doc_stride=128, max_query_length=64, is_training=not evaluate, threads=12)
-        torch.save({"features": features, "dataset": dataset, "examples": examples}, cache_file)
+    features, dataset = Extract_Features(examples=examples,
+            tokenizer=tokenizer,max_seq_length=512, doc_stride=128, max_query_length=64, is_training=not evaluate, threads=12)
     if evaluate:
         return dataset, examples, features
     return dataset
 
 
-def main(isTraining, dataset_type):
+def manager(isTraining, dataset_type, output_directory):
     assert torch.cuda.is_available()
     device = torch.device('cuda')
     config = RobertaConfig.from_pretrained(pretrained_model)
@@ -221,7 +209,53 @@ def main(isTraining, dataset_type):
         model.to(device)
         model.eval()
         tokenizer = RobertaTokenizer.from_pretrained(output_directory, do_lower_case=True)
-        Write_predictions(model, tokenizer, device, dataset_type = dataset_type[0])
+        Write_predictions(model, tokenizer, device, dataset_type = dataset_type[0], output_directory = output_directory)
 
+def main():
+    isTraining,isEval = False, False
+    train_dataset_type, eval_dataset_type = [],[]
+    output_directory = "Roberta"
+    argumentList = sys.argv[1:]
+    options = "ht:e:o:"
+    long_options = ["help", "train=","eval=", "output="]
+    try:
+        arguments, values = getopt.getopt(argumentList, options, long_options)
+        for currentArgument, currentValue in arguments:
+            if currentArgument in ("-h", "--Help"):
+                print ("""python main.py --train [O|C] --eval [O|TS|RG] --output [directory name]\n
+                        --train O for original training C for combined training \n
+                        --eval for eval on (O) original (TS) truncated and (RG) for TS-R dataset as defined in paper\n
+                        --output [dir_name] is the output directory to write weights and predictions in, 
+                        and in case of eval to load weights from.
+                        e.g. python main.py --train C --eval RG --output Roberta_comb
+                        for combined training followed by eval on RG and writing to ./Roberta_comb""")
+                return
+     
+            elif currentArgument in ("-t", "--train"):
+                isTraining = True
+                opts = {'O':[None],'C':[None, 'TS','RG']}
+                if currentValue in opts:
+                    train_dataset_type = opts[currentValue]
+                else:
+                    print('See "python main.py --help" for usage')
+                    return
+            elif currentArgument in ("-e", "--eval"):
+                opts = {'O':[None],'TS':['TS'], 'RG':['RG']}
+                if currentValue in opts:
+                    eval_dataset_type = opts[currentValue]
+                    isEval = True
+                else:
+                    print('See "python main.py --help" for usage')
+                    return
+            elif currentArgument in ("-o", "--output"):
+                output_directory = currentValue
+
+    except getopt.error as err:
+        print (str(err))
+
+    if isTraining:
+        manager(isTraining = True, dataset_type = train_dataset_type, output_directory = output_directory)
+    if isEval:
+        manager(isTraining = False, dataset_type = eval_dataset_type, output_directory = output_directory)
 if __name__ == "__main__":
-    main(isTraining = False,dataset_type = ['RG'])
+    main()

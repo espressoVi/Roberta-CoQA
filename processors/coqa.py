@@ -13,6 +13,69 @@ from torch.utils.data import TensorDataset
 from tqdm import tqdm
 from processors.utils import DataProcessor
 
+class CoqaExample(object):
+    """Sngle CoQA example"""
+    def __init__(
+            self,
+            qas_id,
+            question_text,
+            doc_tokens,
+            orig_answer_text=None,
+            start_position=None,
+            end_position=None,
+            rational_start_position=None,
+            rational_end_position=None,
+            additional_answers=None,
+    ):
+        self.qas_id = qas_id
+        self.question_text = question_text
+        self.doc_tokens = doc_tokens
+        self.orig_answer_text = orig_answer_text
+        self.start_position = start_position
+        self.end_position = end_position
+        self.additional_answers = additional_answers
+        self.rational_start_position = rational_start_position
+        self.rational_end_position = rational_end_position
+
+class CoqaFeatures(object):
+    """Single CoQA feature"""
+    def __init__(self,
+                 unique_id,
+                 example_index,
+                 doc_span_index,
+                 tokens,
+                 token_to_orig_map,
+                 token_is_max_context,
+                 input_ids,
+                 input_mask,
+                 segment_ids,
+                 start_position=None,
+                 end_position=None,
+                 cls_idx=None,
+                 rational_mask=None):
+        self.unique_id = unique_id
+        self.example_index = example_index
+        self.doc_span_index = doc_span_index
+        self.tokens = tokens
+        self.token_to_orig_map = token_to_orig_map
+        self.token_is_max_context = token_is_max_context
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+        self.start_position = start_position
+        self.end_position = end_position
+        self.cls_idx = cls_idx
+        self.rational_mask = rational_mask
+
+class Result(object):
+    def __init__(self, unique_id, start_logits, end_logits, yes_logits, no_logits, unk_logits):
+        self.unique_id = unique_id
+        self.start_logits = start_logits
+        self.end_logits = end_logits
+        self.yes_logits = yes_logits
+        self.no_logits = no_logits
+        self.unk_logits = unk_logits
+
 def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_answer_text):
     """Returns tokenized answer spans that better match the annotated answer."""
     tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
@@ -44,267 +107,6 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
             best_span_index = span_index
 
     return cur_span_index == best_span_index
-
-
-def Extract_Feature_init(tokenizer_for_convert):
-    global tokenizer
-    tokenizer = tokenizer_for_convert
-
-def Extract_Feature(example, tokenizer, max_seq_length = 512, doc_stride = 128, max_query_length = 64):
-    features = []
-    query_tokens = []
-    for question_answer in example.question_text:
-        query_tokens.extend(tokenizer.tokenize(question_answer))
-
-    cls_idx = 3
-    if example.orig_answer_text == 'yes':
-        cls_idx = 0  # yes
-    elif example.orig_answer_text == 'no':
-        cls_idx = 1  # no
-    elif example.orig_answer_text == 'unknown':
-        cls_idx = 2  # unknown
-
-    if len(query_tokens) > max_query_length:
-        # keep tail
-        query_tokens = query_tokens[-max_query_length:]
-
-    tok_to_orig_index = []
-    orig_to_tok_index = []
-    all_doc_tokens = []
-    for (i, token) in enumerate(example.doc_tokens):
-        orig_to_tok_index.append(len(all_doc_tokens))
-        sub_tokens = tokenizer.tokenize(token)
-        for sub_token in sub_tokens:
-            tok_to_orig_index.append(i)
-            all_doc_tokens.append(sub_token)
-
-
-    tok_r_start_position = orig_to_tok_index[example.rational_start_position]
-    if example.rational_end_position < len(example.doc_tokens) - 1:
-        tok_r_end_position = orig_to_tok_index[example.rational_end_position + 1] - 1
-    else:
-        tok_r_end_position = len(all_doc_tokens) - 1
-    if cls_idx < 3:
-        tok_start_position, tok_end_position = 0, 0
-    else:
-        tok_start_position = orig_to_tok_index[example.start_position]
-        if example.end_position < len(example.doc_tokens) - 1:
-            tok_end_position = orig_to_tok_index[example.end_position + 1] - 1
-        else:
-            tok_end_position = len(all_doc_tokens) - 1
-        (tok_start_position, tok_end_position) = _improve_answer_span(
-            all_doc_tokens, tok_start_position, tok_end_position, tokenizer,
-            example.orig_answer_text)
-        
-    # The -4 accounts for <s>, </s></s> and </s>
-    max_tokens_for_doc = max_seq_length - len(query_tokens) - 4
-
-    _DocSpan = collections.namedtuple("DocSpan", ["start", "length"])
-    doc_spans = []
-    start_offset = 0
-    while start_offset < len(all_doc_tokens):
-        length = len(all_doc_tokens) - start_offset
-        if length > max_tokens_for_doc:
-            length = max_tokens_for_doc
-        doc_spans.append(_DocSpan(start=start_offset, length=length))
-        if start_offset + length == len(all_doc_tokens):
-            break
-        start_offset += min(length, doc_stride)
-
-    for (doc_span_index, doc_span) in enumerate(doc_spans):
-        slice_cls_idx = cls_idx
-        tokens = []
-        token_to_orig_map = {}
-        token_is_max_context = {}
-        tokens.append("<s>")
-        for token in query_tokens:
-            tokens.append(token)
-        tokens.extend(["</s>","</s>"])
-
-        for i in range(doc_span.length):
-            split_token_index = doc_span.start + i
-            token_to_orig_map[len(tokens)] = tok_to_orig_index[split_token_index]
-
-            is_max_context = _check_is_max_context(doc_spans,
-                                                   doc_span_index,
-                                                   split_token_index)
-            token_is_max_context[len(tokens)] = is_max_context
-            tokens.append(all_doc_tokens[split_token_index])
-        tokens.append("</s>")
-
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
-
-        # The mask has 1 for real tokens and 0 for padding tokens.
-        input_mask = [1] * len(input_ids)
-        segment_ids = [0]*max_seq_length
-        # Zero-pad up to the sequence length.
-        while len(input_ids) < max_seq_length:
-            input_ids.append(1)
-            input_mask.append(0)
-
-        assert len(input_ids) == max_seq_length
-        assert len(input_mask) == max_seq_length
-        assert len(segment_ids) == max_seq_length
-
-        # rational_part
-        doc_start = doc_span.start
-        doc_end = doc_span.start + doc_span.length - 1
-        out_of_span = False
-        if example.rational_start_position == -1 or not (
-                tok_r_start_position >= doc_start and tok_r_end_position <= doc_end):
-            out_of_span = True
-        if out_of_span:
-            rational_start_position = 0
-            rational_end_position = 0
-        else:
-            doc_offset = len(query_tokens) + 3
-            rational_start_position = tok_r_start_position - doc_start + doc_offset
-            rational_end_position = tok_r_end_position - doc_start + doc_offset
-        # rational_part_end
-
-        rational_mask = [0] * len(input_ids)
-        if not out_of_span:
-            rational_mask[rational_start_position:rational_end_position + 1] = [1] * (
-                        rational_end_position - rational_start_position + 1)
-
-        if cls_idx >= 3:
-            # For training, if our document chunk does not contain an annotation we remove it
-            doc_start = doc_span.start
-            doc_end = doc_span.start + doc_span.length - 1
-            out_of_span = False
-            if not (tok_start_position >= doc_start and tok_end_position <= doc_end):
-                out_of_span = True
-            if out_of_span:
-                start_position = 0
-                end_position = 0
-                slice_cls_idx = 2
-            else:
-                doc_offset = len(query_tokens) + 3
-                start_position = tok_start_position - doc_start + doc_offset
-                end_position = tok_end_position - doc_start + doc_offset
-        else:
-            start_position = 0
-            end_position = 0
-
-        features.append(
-            CoqaFeatures(example_index=0,
-                        
-                         unique_id=0,
-                         doc_span_index=doc_span_index,
-                         tokens=tokens,
-                         token_to_orig_map=token_to_orig_map,
-                         token_is_max_context=token_is_max_context,
-                         input_ids=input_ids,
-                         input_mask=input_mask,
-                         segment_ids=segment_ids,
-                         start_position=start_position,
-                         end_position=end_position,
-                         cls_idx=slice_cls_idx,
-                         rational_mask=rational_mask))
-    return features
-
-
-def Extract_Features(examples, tokenizer, max_seq_length, doc_stride, max_query_length, is_training,threads=1):
-    features = []
-    threads = min(threads, cpu_count())
-    with Pool(threads, initializer=Extract_Feature_init, initargs=(tokenizer,)) as p:
-        annotate_ = partial(
-            Extract_Feature,
-            tokenizer=tokenizer,
-            max_seq_length=max_seq_length,
-            doc_stride=doc_stride,
-            max_query_length=max_query_length,
-        )
-        features = list(
-            tqdm(
-                p.imap(annotate_, examples, chunksize=16),
-                total=len(examples),
-                desc="Extracting features from dataset",
-            )
-        )
-
-    new_features = []
-    unique_id = 1000000000
-    example_index = 0
-    for example_features in tqdm(features, total=len(features), desc="Tag unique id to each example"):
-        if not example_features:
-            continue
-        for example_feature in example_features:
-            example_feature.example_index = example_index
-            example_feature.unique_id = unique_id
-            new_features.append(example_feature)
-            unique_id += 1
-        example_index += 1
-    features = new_features
-    del new_features
-    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-    all_tokentype_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
-    if not is_training:
-        all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
-        dataset = TensorDataset(all_input_ids, all_tokentype_ids, all_input_mask, all_example_index)
-    else:
-        all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
-        all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-        all_rational_mask = torch.tensor([f.rational_mask for f in features], dtype=torch.long)
-        all_cls_idx = torch.tensor([f.cls_idx for f in features], dtype=torch.long)
-        dataset = TensorDataset(all_input_ids, all_tokentype_ids, all_input_mask, all_start_positions,
-                                all_end_positions, all_rational_mask, all_cls_idx)
-
-    return features, dataset
-
-
-class CoqaFeatures(object):
-    def __init__(self,
-                 unique_id,
-                 example_index,
-                 doc_span_index,
-                 tokens,
-                 token_to_orig_map,
-                 token_is_max_context,
-                 input_ids,
-                 input_mask,
-                 segment_ids,
-                 start_position=None,
-                 end_position=None,
-                 cls_idx=None,
-                 rational_mask=None):
-        self.unique_id = unique_id
-        self.example_index = example_index
-        self.doc_span_index = doc_span_index
-        self.tokens = tokens
-        self.token_to_orig_map = token_to_orig_map
-        self.token_is_max_context = token_is_max_context
-        self.input_ids = input_ids
-        self.input_mask = input_mask
-        self.segment_ids = segment_ids
-        self.start_position = start_position
-        self.end_position = end_position
-        self.cls_idx = cls_idx
-        self.rational_mask = rational_mask
-
-class CoqaExample(object):
-    def __init__(
-            self,
-            qas_id,
-            question_text,
-            doc_tokens,
-            orig_answer_text=None,
-            start_position=None,
-            end_position=None,
-            rational_start_position=None,
-            rational_end_position=None,
-            additional_answers=None,
-    ):
-        self.qas_id = qas_id
-        self.question_text = question_text
-        self.doc_tokens = doc_tokens
-        self.orig_answer_text = orig_answer_text
-        self.start_position = start_position
-        self.end_position = end_position
-        self.additional_answers = additional_answers
-        self.rational_start_position = rational_start_position
-        self.rational_end_position = rational_end_position
 
 class Processor(DataProcessor):
     train_file = "coqa-train-v1.0.json"
@@ -550,6 +352,7 @@ class Processor(DataProcessor):
                 continue
 
             if dataset_type == "RG":
+                r_start,r_end = -1,-1
                 gt = _qas['raw_answer']
                 gt_context = nlp(self.pre_proc(gt))
                 _gt = self.process(gt_context)['word']
@@ -557,7 +360,6 @@ class Processor(DataProcessor):
                 if gt not in ['unknown','yes','no']:
                     if found == -1 and not attention:
                         doc_tok.append(gt)
-                        r_start,r_end = -1,-1
                     elif found != -1 and not attention:
                         r_start,r_end = -1,-1
                     elif found == -1 and attention:
@@ -570,9 +372,8 @@ class Processor(DataProcessor):
                                 r_end = r_start + len(_gt)-1
                         if r_start == r_end:
                             continue
-                else:
-                    if attention:
-                        continue
+                elif attention:
+                    continue
 
             example = CoqaExample(
                 qas_id = _datum['id'] + ' ' + str(_qas['turn_id']),
@@ -590,11 +391,207 @@ class Processor(DataProcessor):
         return examples
 
 
-class Result(object):
-    def __init__(self, unique_id, start_logits, end_logits, yes_logits, no_logits, unk_logits):
-        self.unique_id = unique_id
-        self.start_logits = start_logits
-        self.end_logits = end_logits
-        self.yes_logits = yes_logits
-        self.no_logits = no_logits
-        self.unk_logits = unk_logits
+def Extract_Feature_init(tokenizer_for_convert):
+    global tokenizer
+    tokenizer = tokenizer_for_convert
+
+def Extract_Feature(example, tokenizer, max_seq_length = 512, doc_stride = 128, max_query_length = 64):
+    features = []
+    query_tokens = []
+    for question_answer in example.question_text:
+        query_tokens.extend(tokenizer.tokenize(question_answer))
+
+    cls_idx = 3
+    if example.orig_answer_text == 'yes':
+        cls_idx = 0  # yes
+    elif example.orig_answer_text == 'no':
+        cls_idx = 1  # no
+    elif example.orig_answer_text == 'unknown':
+        cls_idx = 2  # unknown
+
+    if len(query_tokens) > max_query_length:
+        # keep tail
+        query_tokens = query_tokens[-max_query_length:]
+
+    tok_to_orig_index = []
+    orig_to_tok_index = []
+    all_doc_tokens = []
+    for (i, token) in enumerate(example.doc_tokens):
+        orig_to_tok_index.append(len(all_doc_tokens))
+        sub_tokens = tokenizer.tokenize(token)
+        for sub_token in sub_tokens:
+            tok_to_orig_index.append(i)
+            all_doc_tokens.append(sub_token)
+
+    tok_r_start_position = orig_to_tok_index[example.rational_start_position]
+    if example.rational_end_position < len(example.doc_tokens) - 1:
+        tok_r_end_position = orig_to_tok_index[example.rational_end_position + 1] - 1
+    else:
+        tok_r_end_position = len(all_doc_tokens) - 1
+    if cls_idx < 3:
+        tok_start_position, tok_end_position = 0, 0
+    else:
+        tok_start_position = orig_to_tok_index[example.start_position]
+        if example.end_position < len(example.doc_tokens) - 1:
+            tok_end_position = orig_to_tok_index[example.end_position + 1] - 1
+        else:
+            tok_end_position = len(all_doc_tokens) - 1
+        (tok_start_position, tok_end_position) = _improve_answer_span(
+            all_doc_tokens, tok_start_position, tok_end_position, tokenizer,
+            example.orig_answer_text)
+        
+    # The -4 accounts for <s>, </s></s> and </s>
+    max_tokens_for_doc = max_seq_length - len(query_tokens) - 4
+
+    _DocSpan = collections.namedtuple("DocSpan", ["start", "length"])
+    doc_spans = []
+    start_offset = 0
+    while start_offset < len(all_doc_tokens):
+        length = len(all_doc_tokens) - start_offset
+        if length > max_tokens_for_doc:
+            length = max_tokens_for_doc
+        doc_spans.append(_DocSpan(start=start_offset, length=length))
+        if start_offset + length == len(all_doc_tokens):
+            break
+        start_offset += min(length, doc_stride)
+
+    for (doc_span_index, doc_span) in enumerate(doc_spans):
+        slice_cls_idx = cls_idx
+        tokens = []
+        token_to_orig_map = {}
+        token_is_max_context = {}
+        tokens.append("<s>")
+        for token in query_tokens:
+            tokens.append(token)
+        tokens.extend(["</s>","</s>"])
+
+        for i in range(doc_span.length):
+            split_token_index = doc_span.start + i
+            token_to_orig_map[len(tokens)] = tok_to_orig_index[split_token_index]
+
+            is_max_context = _check_is_max_context(doc_spans,
+                                                   doc_span_index,
+                                                   split_token_index)
+            token_is_max_context[len(tokens)] = is_max_context
+            tokens.append(all_doc_tokens[split_token_index])
+        tokens.append("</s>")
+
+        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+
+        # The mask has 1 for real tokens and 0 for padding tokens.
+        input_mask = [1] * len(input_ids)
+        segment_ids = [0]*max_seq_length
+        # Zero-pad up to the sequence length.
+        while len(input_ids) < max_seq_length:
+            input_ids.append(1)
+            input_mask.append(0)
+
+        assert len(input_ids) == max_seq_length
+        assert len(input_mask) == max_seq_length
+        assert len(segment_ids) == max_seq_length
+
+        # rational_part
+        doc_start = doc_span.start
+        doc_end = doc_span.start + doc_span.length - 1
+        out_of_span = False
+        if example.rational_start_position == -1 or not (
+                tok_r_start_position >= doc_start and tok_r_end_position <= doc_end):
+            out_of_span = True
+        if out_of_span:
+            rational_start_position = 0
+            rational_end_position = 0
+        else:
+            doc_offset = len(query_tokens) + 3
+            rational_start_position = tok_r_start_position - doc_start + doc_offset
+            rational_end_position = tok_r_end_position - doc_start + doc_offset
+        # rational_part_end
+
+        rational_mask = [0] * len(input_ids)
+        if not out_of_span:
+            rational_mask[rational_start_position:rational_end_position + 1] = [1] * (
+                        rational_end_position - rational_start_position + 1)
+
+        if cls_idx >= 3:
+            # For training, if our document chunk does not contain an annotation we remove it
+            doc_start = doc_span.start
+            doc_end = doc_span.start + doc_span.length - 1
+            out_of_span = False
+            if not (tok_start_position >= doc_start and tok_end_position <= doc_end):
+                out_of_span = True
+            if out_of_span:
+                start_position = 0
+                end_position = 0
+                slice_cls_idx = 2
+            else:
+                doc_offset = len(query_tokens) + 3
+                start_position = tok_start_position - doc_start + doc_offset
+                end_position = tok_end_position - doc_start + doc_offset
+        else:
+            start_position = 0
+            end_position = 0
+
+        features.append(
+            CoqaFeatures(example_index=0,
+                         unique_id=0,
+                         doc_span_index=doc_span_index,
+                         tokens=tokens,
+                         token_to_orig_map=token_to_orig_map,
+                         token_is_max_context=token_is_max_context,
+                         input_ids=input_ids,
+                         input_mask=input_mask,
+                         segment_ids=segment_ids,
+                         start_position=start_position,
+                         end_position=end_position,
+                         cls_idx=slice_cls_idx,
+                         rational_mask=rational_mask))
+    return features
+
+
+def Extract_Features(examples, tokenizer, max_seq_length, doc_stride, max_query_length, is_training,threads=1):
+    features = []
+    threads = min(threads, cpu_count())
+    with Pool(threads, initializer=Extract_Feature_init, initargs=(tokenizer,)) as p:
+        annotate_ = partial(
+            Extract_Feature,
+            tokenizer=tokenizer,
+            max_seq_length=max_seq_length,
+            doc_stride=doc_stride,
+            max_query_length=max_query_length,
+        )
+        features = list(
+            tqdm(
+                p.imap(annotate_, examples, chunksize=16),
+                total=len(examples),
+                desc="Extracting features from dataset",
+            )
+        )
+
+    new_features = []
+    unique_id = 1000000000
+    example_index = 0
+    for example_features in tqdm(features, total=len(features), desc="Tag unique id to each example"):
+        if not example_features:
+            continue
+        for example_feature in example_features:
+            example_feature.example_index = example_index
+            example_feature.unique_id = unique_id
+            new_features.append(example_feature)
+            unique_id += 1
+        example_index += 1
+    features = new_features
+    del new_features
+    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+    all_tokentype_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+    if not is_training:
+        all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
+        dataset = TensorDataset(all_input_ids, all_tokentype_ids, all_input_mask, all_example_index)
+    else:
+        all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
+        all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
+        all_rational_mask = torch.tensor([f.rational_mask for f in features], dtype=torch.long)
+        all_cls_idx = torch.tensor([f.cls_idx for f in features], dtype=torch.long)
+        dataset = TensorDataset(all_input_ids, all_tokentype_ids, all_input_mask, all_start_positions,
+                                all_end_positions, all_rational_mask, all_cls_idx)
+
+    return features, dataset
